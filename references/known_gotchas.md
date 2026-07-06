@@ -35,6 +35,15 @@ Root cause across all of these: `Sample.Reject_Infer`'s inferrers were written a
 
 **Durable lesson:** any batch stats helper that assumes numeric `describe()` columns will break the moment categorical features share a melt with numerics — split by dtype or reindex defensively.
 
+## RejectInferencePipeline weighted GBM training was a no-op (fixed 0.3.16)
+
+- **Trigger:** any RI method that emits `_weight` (`fuzzy_augment`, `parceling`) with `train_ri_models=True`. Approved-only methods (`simple_augment`, `hard_cutoff`) are unaffected.
+- **Symptom:** none — training succeeds, no warning, no error. Model output looks plausible. But the weighted rows have zero effect: swapping in any other weight vector (all-ones, random, business rebalance) trains an identical model to the true `_weight`.
+- **Root cause (`Pipeline/reject_inference.py` L623 in 0.3.15):** `fit_kwargs = {"wgt": weight}` passed to `GradientBoostingModel.fit`. The fit signature is `(x, y, valx, valy, init_score=None, sample_weight=None, eval_sample_weight=None, sample_weight_eval_set=None, **kwargs)` — `wgt` is not a real parameter and is silently absorbed by `**kwargs` and dropped. `GradientBoostingModel` uses `sample_weight`. Old SMF versions did expose `wgt=` on LGB fits, but the API was unified to `sample_weight` in an earlier version and this pipeline site was never updated.
+- **Fix (0.3.16):** `fit_kwargs = {"sample_weight": weight}`. Regression test `SuperModelingFactory_pytest/test_reject_inference_weighted.py` intercepts `GradientBoostingModel.fit` and asserts (a) `sample_weight` is in the observed kwargs, (b) `wgt` never is, (c) the vector length matches the train row count.
+
+**Durable lesson:** any `**kwargs`-accepting fit / call site where a Pipeline hand-rolls the kwarg dict is a silent-drop trap when the underlying signature evolves. When SMF unifies a param name (as with `wgt` → `sample_weight`), grep every callsite in `Pipeline/*.py` at the same time, not just the `Model/*.py` definition — the compiler will not catch drift into `**kwargs`. `require_params(fit, "sample_weight")` in the pytest suite would catch this class of regression.
+
 ## Missing-rate screening stage gap (fixed 0.3.15)
 
 - **Before 0.3.15:** `FeatureScreenConfig` and `FeatureValidationPipelineConfig` had no `missing_rate_threshold`; screening ran PSI → IV → corr only. `missing_rate` appeared in IV tables but was not a pre-PSI filter stage.
