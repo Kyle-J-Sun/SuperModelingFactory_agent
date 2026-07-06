@@ -74,3 +74,14 @@ Never skip straight to 3 or 4 without exhausting 1–2, and never silently do 4 
 | `references/pipeline_catalog.md` | Deciding which Pipeline fits a request; field-level notes on the ones with historically tricky config surfaces |
 | `references/known_gotchas.md` | A symbol you're about to explain or use has history — check before repeating or re-discovering it |
 | `references/introspection_snippets.md` | You need the live-check one-liners, the version-diff-and-smoke-test loop, or a worked "escalation ladder" example |
+
+## Repo sync (maintainer convention)
+
+SMF ships as **four active repos** — keep this skill in sync whenever the main package changes:
+
+1. `SuperModelingFactory` (main package)
+2. `SuperModelingFactory_pytest` (tests)
+3. `SuperModelingFactory_doc` (MkDocs)
+4. **`SuperModelingFactory_Agent`** (this repo — `SKILL.md` + `references/`)
+
+After every main-package merge: **grep this repo** for symbols touched in the diff (`FeatureScreenConfig`, pipeline Config fields, screening stages, WOE paths, etc.). Update `pipeline_catalog.md` for new Config fields; update `known_gotchas.md` for fixed/introduced bugs (with version tags). Canonical checklist lives in the user's `smf-work/SMF_ACTIVE_REPOS_CONVENTION.md`.

@@ -29,6 +29,7 @@ Fields worth checking before assuming defaults:
 - `input_type` ("dataframe" default vs `"csv"`), `feature_batch_size`, `batch_corr_mode` — CSV batch mode has **no row-filter entry point**; WOE fitting sees the whole file. If you need to exclude a subpopulation from fitting, look for `woe_fit_query` (added 0.3.6) before assuming you must pre-filter the file yourself.
 - `population_dims` / `time_dims` — grouped PSI/IV eval; each dim column must be reachable through `batch_base_cols` in batch mode or it silently isn't there for the batch reader to select.
 - `selection_enabled` (0.3.13+) — turns FVP into a screening step whose result can be handed straight to CM via the orchestrator; `selection_params`, `weight_col`, `selection_summary` on the result travel with it.
+- `missing_rate_threshold` (0.3.15+) — when not `None`, runs as **stage 0 on INS** (before PSI): drop features with `missing_rate > threshold`. Also settable via `selection_params["missing_rate_threshold"]`. Outputs `selection_missing_rate` / `selection_missing_rate_dropped` CSVs when `write_outputs=True`.
 - `psi_reference_dataset` — usually `"ins"`; confirm before assuming.
 - Batch mode failure semantics: a failed batch is caught into `batch_metadata` (status=error) **without raising**, and a broken WOE fit chain silently degrades PSI/IV to a raw-value fallback. Always check `result.batch_metadata` and `woe_refine_summary` before trusting `result.validation_summary` in batch mode.
 - Memory: batch size has to respect the pod's actual **cgroup** ceiling (`/sys/fs/cgroup/memory.max`), not `free -h`'s host-level number, and needs headroom for co-tenant processes.
@@ -92,7 +93,9 @@ Runs `FeatureValidationPipeline` with selection turned on, wraps its result in a
 
 ## Feature.Feature_Screen.feature_screen / screen_config_from_mapping (0.3.13+)
 
-The primitive that `CreditModelPipeline`'s `feature_selection` dict now delegates to internally. Call it directly when you want a PSI/IV/corr screen **without** building a full CM run around it — e.g. exploring how a shared-binner (`monotone`, with `psi_use_woe_bins`/`iv_use_woe_bins`/`corr_use_woe_bins=True`) screen differs from independent per-step bins, before committing to a CM config.
+The primitive that `CreditModelPipeline`'s `feature_selection` dict now delegates to internally. Screening order (0.3.15+): **`missing_rate` (optional) → PSI → IV → corr**. Call it directly when you want a screen **without** building a full CM run around it — e.g. exploring how a shared-binner (`monotone`, with `psi_use_woe_bins`/`iv_use_woe_bins`/`corr_use_woe_bins=True`) screen differs from independent per-step bins, before committing to a CM config.
+
+Key `FeatureScreenConfig` fields (confirm live): `missing_rate_threshold`, `missing_rate_ref`, `categorical_features` (for `MonotoneWOEBinner.cate_feats` when using shared bins), `corr_nan_policy`, `on_empty_stage`.
 
 ## Feature.Weighted_Screen.weighted_feature_screen (0.3.7+, corrected 0.3.14)
 

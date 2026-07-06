@@ -26,6 +26,20 @@ Root cause across all of these: `Sample.Reject_Infer`'s inferrers were written a
 
 **Durable lesson:** a covariance/correlation computation over a real feature matrix needs an explicit NaN policy stated out loud — the numpy default ("propagate to NaN, then someone downstream coerces NaN to 0") is silently equivalent to "assume uncorrelated," which is the least safe possible default for a dedup step. Separately: any "keep everything" fallback is only a safety net if it's loud: a silent one is indistinguishable from "the filter worked."
 
+## Mixed categorical + numeric IV screening KeyError (0.3.14, fixed 0.3.15)
+
+- **Trigger:** `selection_enabled=True` + shared WOE bins (`iv_use_woe_bins=True`) + `categorical_features` passed to `MonotoneWOEBinner(cate_feats=...)` + at least one categorical feature survives IV cut alongside numeric features in the same `high_iv_varlist`.
+- **Symptom:** `KeyError: "['MIN', 'MEAN', 'MAX'] not in index"` in `WOE_Engine_Feature_Patch._screening_summary_from_engine` (or the parallel path in `Feature_Insights.get_var_analysis_report`) when merging `proc_means_by_grp` output. Pure-numeric feature sets unaffected.
+- **Root cause:** `proc_means_by_grp` melts numeric + object columns together; pandas `describe()` on the mixed melt returns `count/unique/top/freq` for object columns, not `MIN/MEAN/MAX`.
+- **Fix (0.3.15):** `Distribution_Tool.proc_means_for_screening` splits by dtype before calling `proc_means_by_grp`; categorical rows get `min/mean/max` as NaN.
+
+**Durable lesson:** any batch stats helper that assumes numeric `describe()` columns will break the moment categorical features share a melt with numerics — split by dtype or reindex defensively.
+
+## Missing-rate screening stage gap (fixed 0.3.15)
+
+- **Before 0.3.15:** `FeatureScreenConfig` and `FeatureValidationPipelineConfig` had no `missing_rate_threshold`; screening ran PSI → IV → corr only. `missing_rate` appeared in IV tables but was not a pre-PSI filter stage.
+- **Fix (0.3.15):** `missing_rate_threshold: float | None = None` on both configs; when set, stage 0 runs on INS before PSI, drops features above threshold, persists `missing_rate_table` / `missing_rate_dropped` on `WeightedScreenResult` and FVP selection outputs.
+
 ## `apply_woe` O(n²) performance (fixed before 0.3.3)
 
 `WOE_Monotone_Binner.apply_woe` inserted new WOE columns one at a time via `df[col] = ...`, each insertion forcing pandas to reallocate its internal block manager. On wide batches (100–250+ new columns per call) this dominated runtime and was the confirmed (via `py-spy` stack sampling of a live, stuck process) root cause of a 3,380-candidate-feature validation run blowing through a 12-hour cell timeout with 14/14 batches still not finished. Fixed by collecting the new columns and adding them via a single `pd.concat(axis=1)`.
