@@ -175,6 +175,20 @@ Two MEDIUM-severity items shipped together in 0.5.0 as a coordinated correctness
 - **`-W error::RuntimeWarning` in a user's pytest config will now break `apply_woe` on any dataset with unseen categoricals** (N38 downstream trap). This is the single most likely 0.5.0 upgrade break for engineering teams who treat all warnings as errors. The migration answer is `unseen_category_policy="silent"` at the call site (or `warnings.catch_warnings()` around the call); both preserve the stats dict for offline monitoring. Documented in `v0.5.0.md` migration section.
 - **PSI numeric values are not comparable across the 0.4.x → 0.5.0 boundary on any dataset with drifting missingness** (N29 downstream trap). Historical PSI reports stored from 0.4.x will look artificially calm compared to fresh 0.5.0 runs on the same data; teams that alert on absolute PSI thresholds (e.g. `psi > 0.25`) need to either re-baseline against a 0.5.0 recomputation or pass `missing_policy="drop"` explicitly to freeze the old numbers for continuity. Recommended: re-baseline. The old numbers were wrong.
 
+## Feature / WOE hygiene batch (fixed 0.5.1)
+
+Eight medium-severity hygiene issues shipped together in 0.5.1. Most were not crashers; they were silent numeric distortions or "where did my variable go?" diagnostics gaps.
+
+- **Weighted IV zero-mass bins** used to let zero bad/good mass bins produce `inf` / `nan`, and the synthetic missing bucket could inflate predictive IV. Fixed by excluding the missing bucket by default and skipping class-degenerate bins with a warning.
+- **`_assign_bins(edges=None)`** used to map every non-null value to `"all"` and produce IV=0. Fixed by raising a clear `ValueError` by default; `on_null_edges="warn_and_zero"` preserves the old permissive behavior explicitly.
+- **`Feature_Screen` after missing-rate drop** used to refit later stages on the original feature list in some paths. Fixed so WOE / PSI / IV only receive the current surviving feature list.
+- **PSI one-sided buckets** used to floor the absent side to `1e-6`, creating huge PSI spikes for small new-bucket mass. Fixed with `psi_missing_bucket_policy="smooth_laplace"` by default; `"floor_1e6"` is the old report-compatible path and `"exclude"` removes one-sided buckets from the sum.
+- **Feature insight failures** in `Feature_Insights` and the WOE-engine patch used to disappear through broad or silent exception handling. Fixed by exposing `failed_variables` and emitting a single warning for expected per-variable failures; unexpected exceptions should propagate.
+- **`WOE_Master` missing sentinel** default changed from `-999999` to `SMF_MISSING_BIN`. Passing finite sentinels now warns, and real collision in training data raises.
+- **Empty WOE mapping tables** now raise a contextual `WOE_Master.woe_dict is empty` error instead of raw `No objects to concatenate`.
+
+**Durable lesson:** feature-screening tools need loud failure surfaces. "Variable disappeared" and "metric is exactly zero" are often swallowed upstream exceptions, not clean statistical conclusions. Check `failed_variables`, sentinel collisions, and PSI bucket policy before trusting a calm report.
+
 ## Test-environment baseline (post-0.5.0)
 
 Not a code bug — a **coverage-hiding gap** discovered while validating 0.5.0 in a fresh sandbox venv. Recorded here because the failure mode is silent (green run, 22 SKIPPED) and easy to miss on future releases.
