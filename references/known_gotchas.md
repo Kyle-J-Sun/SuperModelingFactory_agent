@@ -212,3 +212,28 @@ The 2026-07-12 full retest (TEST_REPORT, section 0.3) left two residuals; both f
 - When a fix lets a previously-crashing input travel further down a staged pipeline, audit every later stage for the same assumption — "fixed at IV" would have just relocated the crash to corr.
 - Any imputation applied at fit time must be captured as state and re-applied at predict time; filling only the training frame is a train/serve skew bug wearing a fix's clothes.
 - A module-level blanket `filterwarnings("ignore")` anywhere in a library silently disables every carefully-designed warning everywhere else in it.
+
+## Silent equal_freq WOE plot failure (fixed 0.6.2)
+
+`FeatureValidationPipeline(woe_engine="equal_freq", plot_outputs=True)` silently produced **zero PNGs** under `figs/woe/` on every 0.5.x / 0.6.0 / 0.6.1 release, with no log line and no exception surfaced to the user. Two independent defects layered on top of each other:
+
+- **API-surface defect (WOE_Master)**: `WOE_Master.plot_bivar_graph(self, data, group, dirname, varlist=None)` declared `group` as a **required positional argument**, even though the underlying primitive `get_bivar_graph(..., group=None, ...)` has always accepted an ungrouped call. `feature_validation._plot_woe` invoked it as `engine.plot_bivar_graph(transformed, dirname=str(base_dir))` — no `group` — for the base (ungrouped) figure, and got a `TypeError: missing 1 required positional argument: 'group'` on the very first call.
+- **Silencer defect (feature_validation)**: the entire `_plot_woe` body was `try: ... except Exception: return`. The `TypeError` above was swallowed with **no log, no warning, no re-raise**. The monotone engine uses a different code path (`engine.plot_woe_graph`), so the blind spot only manifested on `equal_freq` and any other engine whose plot entry point is `plot_bivar_graph`. It survived from 0.5.x through 0.6.1 because the existing plot tests only covered the monotone branch and the equal_freq branch through `CreditModelPipeline`, whose call site correctly passed `group=` as a kwarg.
+- **Secondary directory defect surfaced during the fix**: `WOE_Master.plot_bivar_graph` did not `mkdir` its composed `save_dir`. Callers were expected to pre-create every subdirectory; `feature_validation._plot_woe` only created the base `figs/woe/<target>`, so even after the `TypeError` was fixed the first PNG write would `FileNotFoundError`. Fix moved `os.makedirs(save_dir, exist_ok=True)` into `plot_bivar_graph` itself — the method that composes the path also owns creating it.
+
+Fix (0.6.2):
+- `WOE_Master.plot_bivar_graph` — `group` defaults to `None`; positional order preserved (`data, group, dirname, varlist`) for backward compatibility; `dirname=None` now raises a clear `TypeError` at call time; the method owns its `mkdir`.
+- `feature_validation._plot_woe` — passes `group=None` explicitly at the ungrouped call site; the outer `except Exception:` block now emits a `_logger.warning` naming engine, target, output_dir, and the underlying exception, then returns. Plot failure still does not kill the pipeline, but it is no longer invisible.
+- New regression coverage (`SuperModelingFactory_pytest/test_pipeline_bugfix_062.py`): API-surface (TestN45), end-to-end equal_freq PNG output through FeatureValidationPipeline (TestN46), and a logger-warning assertion for engine-side plot failures (TestN47).
+
+**Durable lessons:**
+- **A bare `except Exception: return` in a library is a bug in itself**, independent of any specific defect it hides. Every silenced exception is a monitoring failure waiting to happen. The canonical pattern in SMF from 0.6.2 forward: `except Exception as exc: _logger.warning("...error=%r", ..., exc); return` — log first, decide the recovery second. Silent failure is *more* dangerous than a crash because a crash gets fixed by the next release; a silent failure accumulates for years.
+- **When you add coverage for a new configuration surface (like `plot_outputs`), sweep every engine/adapter path that flows through the same output block.** The 0.6.1 `plot_outputs` toggle was fully tested on the monotone engine and never exercised the equal_freq branch end-to-end — because the equal_freq path had been silently broken all along, no baseline existed to compare against. Grep for every branch of every `hasattr` / `get_engine_name()` switch and put at least one end-to-end assertion behind each.
+- **Any method that composes a path should own creating it** (`os.makedirs(..., exist_ok=True)`). Splitting the responsibility between caller and callee (caller creates base, callee expects subdirs to exist) is a bug pattern that survives every refactor because it only fails on the third-least-common call site.
+
+## Test-environment baseline (post-0.6.2)
+
+- Now requires **five** optional deps for 0-skip / 0-failed: `pyodps>=0.11`, `shap>=0.45`, `lime>=0.2`, `statsmodels>=0.14`, `PyYAML>=6.0`. All five are pinned in `SuperModelingFactory_pytest/requirements-dev.txt` and installed by `SuperModelingFactory/.github/workflows/tests.yml`. Full suite on modern matrix: **662 passed / 0 skipped / 0 failed**.
+- `statsmodels` unlocks `test_pipeline_060_bugfixes.py::test_feature_selection_nan_handling_defaults_to_median` (Feature_Screen VIF path).
+- `PyYAML` unlocks `test_pipeline_gui_schema.py::test_yaml_roundtrip_and_config_from_dict` (optional `config_to_yaml`/`config_from_yaml` in Pipeline field_meta).
+- The 0.5.0 zero-skip discipline continues to hold: any new `SKIPPED [could not import 'X']` line during release verification is a blocking finding and must either add `X` to `requirements-dev.txt` or carry an explicit `@pytest.mark.skip(reason=...)`.
