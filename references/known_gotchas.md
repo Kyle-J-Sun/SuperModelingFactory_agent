@@ -231,9 +231,36 @@ Fix (0.6.2):
 - **When you add coverage for a new configuration surface (like `plot_outputs`), sweep every engine/adapter path that flows through the same output block.** The 0.6.1 `plot_outputs` toggle was fully tested on the monotone engine and never exercised the equal_freq branch end-to-end — because the equal_freq path had been silently broken all along, no baseline existed to compare against. Grep for every branch of every `hasattr` / `get_engine_name()` switch and put at least one end-to-end assertion behind each.
 - **Any method that composes a path should own creating it** (`os.makedirs(..., exist_ok=True)`). Splitting the responsibility between caller and callee (caller creates base, callee expects subdirs to exist) is a bug pattern that survives every refactor because it only fails on the third-least-common call site.
 
-## Test-environment baseline (post-0.6.2)
+## equal_freq WOE plot close-out (fixed 0.6.3)
 
-- Now requires **five** optional deps for 0-skip / 0-failed: `pyodps>=0.11`, `shap>=0.45`, `lime>=0.2`, `statsmodels>=0.14`, `PyYAML>=6.0`. All five are pinned in `SuperModelingFactory_pytest/requirements-dev.txt` and installed by `SuperModelingFactory/.github/workflows/tests.yml`. Full suite on modern matrix: **662 passed / 0 skipped / 0 failed**.
+0.6.2 only fixed **half** of the silent-plot problem above. The 0.6.2 diagnosis included this sentence, which turned out to be wrong:
+
+> "The underlying `get_bivar_graph` primitive has always accepted `group=None`."
+
+It hadn't. The signature default was there, but the function body's `if group:` guard sat **after** the crash point. `get_bivar_graph` did the reference-WOE plot loop first (which writes PNGs successfully), then unconditionally called `get_mapped_woe_summary(..., grp_name=[group])` and `align_bin_num(..., grp_name=[group])` — those internally do `data.groupby([None])`, which raises `TypeError: 'NoneType' object is not callable`. Only after that unreachable code did `if group:` gate the plotting loop.
+
+Net effect on 0.6.2 in the field:
+
+| engine       | base PNGs                              | `by_<group>/*.png` | plot exception          |
+|--------------|----------------------------------------|--------------------|-------------------------|
+| monotone     | 6                                      | 3                  | none                    |
+| equal_freq   | 3 (ref-plot loop runs before ② crashes) | **0**              | **TypeError** every run |
+
+Because the 0.6.2 pipeline `try` block caught the `TypeError` and `return`ed, the subsequent `for group in cfg.woe_plot_groups:` loop that emits `by_<group>/*.png` never ran. The 0.6.2 `logger.warning` fix made the residual crash visible — that's how the second half was actually caught.
+
+Fix (0.6.3): hoist `if group:` in `WOE_Plot_Tool.get_bivar_graph` so it wraps the `summary + align + plot` triplet. Docstring in `WOE_Master.plot_bivar_graph` corrected to remove the 0.6.2 wrong-assumption sentence.
+
+Regression coverage (`SuperModelingFactory_pytest/test_pipeline_bugfix_063.py`): TestN46b (base plots emit no `WOE plot generation failed` warning), TestN48 (equal_freq + `woe_plot_groups=['chan']` produces `by_chan/*.png`), TestN49 (white-box: `get_bivar_graph(group=None)` does not raise).
+
+**Durable lessons (three, all sharing one root cause):**
+
+- **Signature defaults are not proof the body handles the default value.** Both the 0.6.1 and 0.6.2 wrong-turns came from reading `def get_bivar_graph(..., group=None, ...)` and stopping there. When the diagnosis hinges on "the underlying primitive supports X", read the body to the point where X is actually consumed — or write a white-box test that pins the claim.
+- **"Output exists" ≠ "no error occurred."** The 0.6.2 D5 test asserted "PNG count > 0" and passed on 0.6.2 while every run also raised — because loop ① wrote PNGs *before* loop ② crashed. Any test path where the failure is caught by a surrounding `try/except` must assert **both** (a) the presence of the desired artifact and (b) the absence of warnings/exceptions from the operation. This is now `TestN46b`'s job: PNGs exist AND `caplog` shows no `"WOE plot generation failed"` warning.
+- **The 0.6.2 `logger.warning` justified itself on day one.** It was the visibility half of a two-part fix; even though the behavioral half was wrong, the visibility half was what surfaced the residual crash for 0.6.3. When a bug has a visibility layer and a behavioral layer, always ship the visibility layer even if you're not 100% sure the behavioral layer is complete — you'll find out from the next crash.
+
+## Test-environment baseline (post-0.6.3)
+
+- Same five optional deps as 0.6.2: `pyodps>=0.11`, `shap>=0.45`, `lime>=0.2`, `statsmodels>=0.14`, `PyYAML>=6.0`. All pinned in `SuperModelingFactory_pytest/requirements-dev.txt` and installed by `SuperModelingFactory/.github/workflows/tests.yml`. Full suite on modern matrix: **665 passed / 0 skipped / 0 failed** (0.6.2 was 662; +3 from the new 0.6.3 regression suite).
 - `statsmodels` unlocks `test_pipeline_060_bugfixes.py::test_feature_selection_nan_handling_defaults_to_median` (Feature_Screen VIF path).
 - `PyYAML` unlocks `test_pipeline_gui_schema.py::test_yaml_roundtrip_and_config_from_dict` (optional `config_to_yaml`/`config_from_yaml` in Pipeline field_meta).
 - The 0.5.0 zero-skip discipline continues to hold: any new `SKIPPED [could not import 'X']` line during release verification is a blocking finding and must either add `X` to `requirements-dev.txt` or carry an explicit `@pytest.mark.skip(reason=...)`.
