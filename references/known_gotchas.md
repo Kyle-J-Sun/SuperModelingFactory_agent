@@ -408,3 +408,15 @@ User report: on `MonotoneWOEBinner.plot_woe_graph(group_name=...)` charts the pe
 - Pin "whole sample as one group == overall" wherever a chart shows both: one assertion catches wrong denominators and silently omitted components. It cannot tell "follow the fitted decision" from "re-decide per group" — that needs multi-group fixtures whose shares straddle the threshold, verified against an explicit mutant.
 - Making a statistic exact on small subsets amplifies eps artifacts (cell shares grow k-fold); reuse the codebase's degenerate-cell convention (`iv_guard`) rather than raw eps.
 - Extend a checksummed artifact with a separately digested key bound to the base digest instead of widening the base digest, so older readers keep validating what they understand.
+
+## ParallelApplyEngine process backend broke on joblib 1.6 (CI drift 2026-09-17, fixed after 0.8.0)
+
+Found when the by-group IV fix hit CI: every matrix job failed exactly one test, `test_parallel_engine_row_split_process_preserves_order` (1128 passed / 1 failed in all six), unrelated to the diff. joblib 1.6.0 (released 2026-08-31, after the 0.8.0 CI run) removed the vendored `joblib.externals.cloudpickle` and now `Requires-Dist: cloudpickle>=3.0`. `ParallelApplyEngine._validate_picklable` imported the vendored module *inside* the try block that converts any exception into "func, func_args, and func_kwargs must be serializable for backend='process'", so with joblib ≥ 1.6 every process-backend run failed with a TypeError blaming a perfectly serializable callable. Local runs stayed green because the WSL venv pins joblib 1.5.3.
+
+- **Fix:** resolve the serializer before the check — vendored copy when present, otherwise the `cloudpickle` package (a joblib ≥ 1.6 dependency, so no new SMF requirement); an import failure now surfaces as ImportError.
+- **Pinned:** a test hides the vendored module and asserts serializable callables validate, non-serializable arguments still raise TypeError, and a missing serializer is an ImportError. Verified against a real joblib 1.6.0 install: the old engine fails 2 tests in `test_parallel_engine.py`, the fixed one passes 8/8.
+
+**Durable lessons:**
+- Never import inside the `try` whose `except Exception` rewrites errors into a domain message — an environment problem then masquerades as a user error. Resolve dependencies first, then guard only the operation being validated.
+- `joblib.externals.*` (and any vendored `externals` namespace) is private and can vanish in a minor release; prefer the public package, falling back to the vendored copy only for old versions.
+- An unpinned CI matrix will surface dependency drift on whatever commit lands next. When CI fails on a file the diff never touched, compare installed versions against the last green run before suspecting the change.
