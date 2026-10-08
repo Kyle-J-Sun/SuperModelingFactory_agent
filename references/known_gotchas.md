@@ -500,7 +500,7 @@ Both pipelines were run on synthetic data with known properties (strong feature,
 - **Parameters that reached only half of the pipeline:** `corr_params['method']`, `woe_suffix`, `random_state` (backward proxy, CatBoost `random_seed`), `on_empty_stage`, `eval_weight_col=None`.
 - **Resource blow-up:** `ExcelMaster.set_cell_size` wrote the height of all 1,048,576 rows per sheet; the default 20-sheet report needed about 10 GB.
 
-Documented, not changed: the special-value bins of `MonotoneWOEBinner` use the totals of all rows while ordinary bins use the ordinary rows; the warm-start prior is not seen by early stopping, the Optuna table or SHAP; `perf_min_bin_prop` is a target; a reused `output_dir` keeps files of earlier runs.
+Opt-in switch, default unchanged: `MonotoneWOEBinner(sv_total_basis='all')` measures every bin against the totals of all rows (the textbook scorecard base); the default `'ordinary'` measures ordinary bins against the ordinary rows and special/`[Missing]` bins against all rows, which overstates IV (1.20 vs 0.89 in the test) and can rank a riskier special bin below a safer ordinary one — recommend `'all'` for LR. Documented, not changed: the warm-start prior is not seen by early stopping, the Optuna table or SHAP; `perf_min_bin_prop` is a target; a reused `output_dir` keeps files of earlier runs.
 
 **Durable lessons:**
 - A test double of "the other path" is the cheapest audit: for every output that two paths produce (batch vs not, artifact hand-off vs self-fit, reported table vs applied mapping, raw vs WOE frame), compare them on data with a sentinel, a missing label, a duplicated index and a weight column.
