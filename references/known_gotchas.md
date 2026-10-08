@@ -488,3 +488,22 @@ Once the import-time filter was gone, the full-suite warnings summary (107 disti
 - Empty placeholder frames (`pd.DataFrame(columns=...)`) are not neutral in `pd.concat`: their object dtype leaks into the result and can silently disable downstream stages. Build placeholders from the real frame (`df.iloc[:0]`) or leave them out of the concat — and measure every consumer when the dtype changes back.
 - When a guard (try/except + warning) catches an exception on a routine path, the warning text is a bug report — follow the original error.
 - Replacing a deprecated plotting call needs a pixel comparison, including degenerate inputs: hidden side effects (a removed anchor artist, the current-axes default) change autoscaling and targets.
+
+## End-to-end audit of `CreditModelPipeline` and `FeatureValidationPipeline` (audit 2026-10-08; fixed after 0.8.2, unreleased)
+
+Both pipelines were run on synthetic data with known properties (strong feature, near-duplicate, constant, drifting, high-missing, special values, weights, OOT) and every stage was compared with an independent recomputation. About 60 defects were fixed with 172 regression tests (`SuperModelingFactory_pytest/test_pipeline_e2e_audit.py`; 136 fail on the unfixed package). The full list is in the doc repo's `changelog/unreleased.md` (section 5) and `SuperModelingFactory_pytest/ENVIRONMENT.md` (section 4). Families, with the one example that explains each:
+
+- **Silent swallow of a failure.** A constant feature crashed the screening plots (`get_decision_tree_binning_edges` returned a tuple); `CreditModelPipeline` caught every screening exception, kept every feature and said nothing. The screening failure now warns, and `on_empty_stage='raise'` propagates as `EmptyStageError`.
+- **Two code paths that must agree did not.** `fit` filled missing values with -999999 while `transform` used `missing_ref_value`; FVP, the screening engine and CMP declared the `-999999` special value differently (`with_default_special_values` is the single rule now); `woe_table` was recomputed from raw counts instead of reporting the applied mapping; the DataFrame and the CSV batch paths inferred `new_feature_cols` by different rules and the batch path did not read grouping columns; batch mode promoted unlabelled rows to INS.
+- **Index labels instead of positions.** `SampleSplitter.split_df` used `df.loc` on index labels, so a duplicated index (after `pd.concat`) duplicated rows and leaked INS into OOS.
+- **Hand-off without a contract.** An artifact could carry a split, a WOE engine or a feature list that the credit-model run then ignored or contradicted. The artifact now records its split settings; mismatches, features without bins, a missing engine and replaced `target_col`/`weight_col` warn or raise.
+- **Parameters that reached only half of the pipeline:** `corr_params['method']`, `woe_suffix`, `random_state` (backward proxy, CatBoost `random_seed`), `on_empty_stage`, `eval_weight_col=None`.
+- **Resource blow-up:** `ExcelMaster.set_cell_size` wrote the height of all 1,048,576 rows per sheet; the default 20-sheet report needed about 10 GB.
+
+Documented, not changed: the special-value bins of `MonotoneWOEBinner` use the totals of all rows while ordinary bins use the ordinary rows; the warm-start prior is not seen by early stopping, the Optuna table or SHAP; `perf_min_bin_prop` is a target; a reused `output_dir` keeps files of earlier runs.
+
+**Durable lessons:**
+- A test double of "the other path" is the cheapest audit: for every output that two paths produce (batch vs not, artifact hand-off vs self-fit, reported table vs applied mapping, raw vs WOE frame), compare them on data with a sentinel, a missing label, a duplicated index and a weight column.
+- Read a tuning parameter's effect, not its presence: five parameters were accepted and reached only the report, not the stage they were named after.
+- A documented limitation that is also a bug looks the same in the docs (`min_n_bins` "can end one bin below" was the off-by-one itself); when a doc sentence describes an exception to the parameter's own meaning, check it against the code.
+- Probe on frozen copies: run the full suite on a copy of the package while editing the working tree, and prove each new test fails on a snapshot of the unfixed code.

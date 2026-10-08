@@ -106,7 +106,7 @@ Label maturity/coverage, segment bad-rate, and INS/OOS/OOT split recommendation 
 
 `Modeling_Tool.Pipeline.orchestrator.run_modeling_from_validation(data, *, fvp_config=None, cm_config=None, selection_enabled=True, reuse_screening_woe=True)`
 
-Runs `FeatureValidationPipeline` with selection turned on, wraps its result in a `FeatureScreeningArtifact` (`Pipeline.screening_artifact`), and passes that straight into `CreditModelPipeline` (`feature_selection_mode="from_artifact"`, `target_col`/`weight_col`/`feature_cols` taken from the artifact). Reach for this instead of hand-chaining FVP→CM when you don't need anything custom between the two steps — it also guarantees the WOE binner isn't re-fit twice (`reuse_screening_woe=True`).
+Runs `FeatureValidationPipeline` with selection turned on, wraps its result in a `FeatureScreeningArtifact` (`Pipeline.screening_artifact`), and passes that straight into `CreditModelPipeline` (`feature_selection_mode="from_artifact"`, `target_col`/`weight_col`/`feature_cols` taken from the artifact). Reach for this instead of hand-chaining FVP→CM when you don't need anything custom between the two steps — it also guarantees the WOE binner isn't re-fit twice (`reuse_screening_woe=True`). It replaces `cm_config.target_col` / `weight_col` with the validation run's and warns when that changes a value you set; the credit-model run also warns when its INS/OOS split differs from the artifact's (the artifact records `config_snapshot["split"]`) and drops selected features the reused engine has no bins for.
 
 ## Feature.Feature_Screen.feature_screen / screen_config_from_mapping (0.3.13+)
 
