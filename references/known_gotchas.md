@@ -509,3 +509,16 @@ Defaults changed in 0.9.0 (with `unseen_special_policy='neutral'`, announced in 
 - Probe on frozen copies: run the full suite on a copy of the package while editing the working tree, and prove each new test fails on a snapshot of the unfixed code.
 - A copy that stands in for a missing sample (stand-in OOT = OOS) must carry a mark: every pooled statistic downstream double-counts it otherwise, and nothing in the numbers looks wrong.
 - Sharding a pipeline (feature batches) is only exact for stages that judge one item at a time. Stages that compare items (correlation, VIF) or count them (caps) must run once on the merged survivors; a union of per-shard results is a different algorithm, and a per-shard fallback (keep all when a stage empties the shard) leaks items the global run drops.
+
+## `RejectInferencePipeline` trained rows without a label as goods (audit 2026-10-09; fixed after 0.9.0, unreleased)
+
+The pipeline was run on synthetic approved/rejected applications with a known label for every row. `_fit_pipeline_model` binarizes the target with `(pd.to_numeric(target) > 0.5).astype(int)`, which turns a missing target into 0, and nothing upstream removed unlabelled rows:
+
+- **Approved rows without a target** (not yet performed) were skipped by the pre-score (`target.notna()` filter) but kept by every RI model and `no_ri_benchmark`: trained as goods (664 of them in the audit, true bad rate 10.5%). The random OOT and the validation sample could draw them, and `ri_summary['prescore_AUC']` was NaN (`roc_auc_score` raised on NaN inside a bare `except`).
+- **`hard_cutoff` rejects with a missing score** keep a missing label on purpose since 0.4.2 (N17), and the same cast trained them as goods anyway: the 0.4.2 fix only moved the problem one call down.
+
+Fix: training, validation and the random OOT use labelled rows only (OOT and validation are drawn from labelled approved rows, so fully labelled data gets the identical sample as before); the rows stay in `ri_datasets`; `ri_summary` gains `N_approved_unlabelled` / `N_rejected_unlabelled`, `ri_model_perf` gains `train_unlabelled_n`, and a `UserWarning` names the counts; `prescore_AUC` is computed on labelled approved rows; `_fit_pipeline_model` raises `ValueError` if a missing target ever reaches it; `train_ri_models=True` with no labelled approved row raises instead of training on all-good labels. Regression tests: `SuperModelingFactory_pytest/test_reject_inference_audit.py`.
+
+Still open from the same audit (reported, not fixed yet): a pipeline-trained pre-score with `ri_score_direction='high_good'` inverts `hard_cutoff` and `fuzzy_augment`; an external `ri_approved_data` keeps its own stale `score_col`; the default random OOT rows were in the pre-score's training data (hard-cutoff OOT AUC +0.03 on pure noise); `split_col` drops rejected OOS rows from training; `oot_frac=0` keeps one OOT row and `best_method` falls to the first row.
+
+**Durable lesson:** when a stage deliberately produces a missing value to mean "unknown", follow it to every consumer. A cast, a `fillna`, a `> 0.5` comparison or a groupby sum downstream turns "unknown" back into a confident answer, and the fix that introduced the missing value looks done because its own unit test passes.
