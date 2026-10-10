@@ -1,6 +1,6 @@
 # Known gotchas — a history log, not a current-state list
 
-Every entry is tagged with when it was true. **Before repeating one of these to the user, check whether the installed version is at or past the fix** (introspect the relevant source — `inspect.getsource`) and say so either way: "this was real before v0.3.X, confirmed fixed in your current source" is a better answer than silently re-warning about something already closed, and better than silently assuming it's fixed without checking.
+Every entry is tagged with when it was true (0.9.0 was never published: a fix tagged 0.9.0 reaches PyPI users in 0.9.1). **Before repeating one of these to the user, check whether the installed version is at or past the fix** (introspect the relevant source — `inspect.getsource`) and say so either way: "this was real before v0.3.X, confirmed fixed in your current source" is a better answer than silently re-warning about something already closed, and better than silently assuming it's fixed without checking.
 
 ## Reject inference direction bugs (fixed 0.3.3)
 
@@ -489,7 +489,7 @@ Once the import-time filter was gone, the full-suite warnings summary (107 disti
 - When a guard (try/except + warning) catches an exception on a routine path, the warning text is a bug report — follow the original error.
 - Replacing a deprecated plotting call needs a pixel comparison, including degenerate inputs: hidden side effects (a removed anchor artist, the current-axes default) change autoscaling and targets.
 
-## End-to-end audit of `CreditModelPipeline` and `FeatureValidationPipeline` (audit 2026-10-08; fixed in 0.9.0)
+## End-to-end audit of `CreditModelPipeline` and `FeatureValidationPipeline` (audit 2026-10-08; fixed in 0.9.0, first published in 0.9.1)
 
 Both pipelines were run on synthetic data with known properties (strong feature, near-duplicate, constant, drifting, high-missing, special values, weights, OOT) and every stage was compared with an independent recomputation. About 60 defects were fixed with regression tests (241 in `SuperModelingFactory_pytest/test_pipeline_e2e_audit.py`; every defect has at least one test that fails on the unfixed package). The full list is in the doc repo's `changelog/v0.9.0.md` (section 5) and `SuperModelingFactory_pytest/ENVIRONMENT.md` (section 4). Families, with the one example that explains each:
 
@@ -510,7 +510,7 @@ Defaults changed in 0.9.0 (with `unseen_special_policy='neutral'`, announced in 
 - A copy that stands in for a missing sample (stand-in OOT = OOS) must carry a mark: every pooled statistic downstream double-counts it otherwise, and nothing in the numbers looks wrong.
 - Sharding a pipeline (feature batches) is only exact for stages that judge one item at a time. Stages that compare items (correlation, VIF) or count them (caps) must run once on the merged survivors; a union of per-shard results is a different algorithm, and a per-shard fallback (keep all when a stage empties the shard) leaks items the global run drops.
 
-## `RejectInferencePipeline` trained rows without a label as goods (audit 2026-10-09; fixed after 0.9.0, unreleased)
+## `RejectInferencePipeline` trained rows without a label as goods (audit 2026-10-09; fixed in 0.9.1)
 
 The pipeline was run on synthetic approved/rejected applications with a known label for every row. `_fit_pipeline_model` binarizes the target with `(pd.to_numeric(target) > 0.5).astype(int)`, which turns a missing target into 0, and nothing upstream removed unlabelled rows:
 
@@ -519,7 +519,7 @@ The pipeline was run on synthetic approved/rejected applications with a known la
 
 Fix: training, validation and the random OOT use labelled rows only (OOT and validation are drawn from labelled approved rows, so fully labelled data gets the identical sample as before); the rows stay in `ri_datasets`; `ri_summary` gains `N_approved_unlabelled` / `N_rejected_unlabelled`, `ri_model_perf` gains `train_unlabelled_n`, and a `UserWarning` names the counts; `prescore_AUC` is computed on labelled approved rows; `_fit_pipeline_model` raises `ValueError` if a missing target ever reaches it; `train_ri_models=True` with no labelled approved row raises instead of training on all-good labels. Regression tests: `SuperModelingFactory_pytest/test_reject_inference_audit.py`.
 
-Fixed in the same round (also unreleased), three ways the pre-score disagreed with the rest of the pipeline:
+Fixed in the same round (also 0.9.1), three ways the pre-score disagreed with the rest of the pipeline:
 - `ri_score_direction='high_good'` with a pre-score trained by the pipeline (always P(bad)) inverted `hard_cutoff` and `fuzzy_augment`; it now raises `ValueError` (and `validate_pipeline_config` reports it). `high_good` is for the user's own score with `train_prescore=False`.
 - An external `ri_approved_data` kept its own stale `score_col` while the rejects got the new pre-score; the reference is now scored with the trained pre-score (`UserWarning` when a column is replaced).
 - The default random OOT rows were in the pre-score's training data, so the inferred reject labels carried OOT labels into the RI models (hard-cutoff OOT AUC 0.54 vs 0.51 on pure noise). The OOT is now drawn before the pre-score (same rows as before) and left out of its fit; with `ri_approved_scope='output_subset'` the drawn rows inside the subset are used. The pre-score still sees the RI models' validation rows.
@@ -531,7 +531,7 @@ Still open from the same audit (reported, not fixed yet): `split_col` drops reje
 - A model whose output becomes another model's labels is part of that model's training: hold the evaluation sample out of every upstream fit, not just the last one. A leak through generated labels is invisible in the downstream code and only shows on pure-noise data.
 - A direction or scale setting that describes a column must be checked against whoever writes the column; when the pipeline writes it, the setting is no longer free.
 
-## `ScoreComparisonPipeline` compared scores on different rows (audit 2026-10-09; fixed after 0.9.0, unreleased)
+## `ScoreComparisonPipeline` compared scores on different rows (audit 2026-10-09; fixed in 0.9.1)
 
 Run on synthetic scores with known performance; fixes in the shared evaluation code, so `Model_Evaluation_Tool` behaves the same outside the pipeline. Regression tests: `SuperModelingFactory_pytest/test_score_comparison_audit.py`.
 
@@ -554,3 +554,20 @@ Not defects, still worth knowing: `gains_display_metric_list` has no effect in t
 - Never build a `DataFrame.query` string from data values: types and quoting break it. Select with boolean masks.
 - A `**kwargs` that is "accepted and ignored" turns a caller's option into a silent no-op: when one implementation delegates to another, check that every option it forwards is honoured or rejected.
 - Any name that comes from the user and becomes part of a path must be made safe at the point where the path is built.
+
+## Class-pure WOE bins got their WOE from `eps` alone (algorithm review 2026-10-10; default changed in 0.9.1)
+
+`MonotoneWOEBinner._compute_woe_table` computes `log((pct_bad + eps) / (pct_good + eps))` with `eps=1e-6` (same formula in 0.8.2). A bin with only goods (or only bads) gets a WOE of about -9.9 for 2% of the goods, -12.4 for 20%; the IV of a feature whose lowest fifth holds no bad read 3.09 instead of 0.57, and such a bin can dominate an LR. `min_bad_count` / `min_good_count` / `small_bin_policy` already existed (G08, 0.6.7) but were off.
+
+- **0.9.1 defaults:** `min_bad_count=1`, `min_good_count=1`, `small_bin_policy='merge'` on `MonotoneWOEBinner` itself, so the pipelines (`monotone_woe_params` does not carry the keys), `feature_screen` and direct users all merge pure bins into the WOE-closest neighbor. The policy also enforces `min_bin_size` (3%), so small non-pure bins merge too (`min_bin_size=0` limits it to pure bins). A pure bin that `min_n_bins` keeps now warns ("still has bad=..., good=0 after merging"). Legacy: `small_bin_policy=None`. Old pickles keep `None` (instance attribute, plus class-level `None` fallbacks for pickles from before G08). Shipped in a patch release as a documented exception to RELEASING.md.
+- **Side effect found while making the change:** merging folds a near-perfect separator into an ordinary bin when the pure bins' only neighbor is across the class boundary (hard-leak fixture: WOE-bin IV 11.5 -> 0.6; `f_degen` 3.74 -> 0.26). The weighted screening on WOE bins tested `iv_upper_threshold` on the engine's bins, so it stopped catching the leak. Fixed in the same change: on that path the floored IV of numeric features is computed on weighted equal-frequency bins (`_weighted_iv_for_var`), as the unweighted WOE-bins path already did with unit weights. Tests that pin pure-bin results (`test_unarmed_keeps_legacy_ranking`, the multigap round-trip fixture, `TestPureBinIvConsistency`, `test_categorical_policy_none_preserves_legacy_table`) pass `small_bin_policy=None`.
+- Not done (optional in the review): Haldane-style 0.5 smoothing of zero cells left after merging; `sv_woe_smoothing` (special values) still defaults to `'none'`.
+
+## `ODPSRunner` defaulted to the author's own project and VPC endpoint (≤ 0.9.0, removed in 0.9.1)
+
+`ODPSRunner()` fell back to a hardcoded MaxCompute project and an internal VPC endpoint when `ODPS_PROJECT` / `ODPS_ENDPOINT` were unset, and the docs repeated both. Since 0.9.1 all four variables are required (`KeyError` naming the missing one); docs and tests use placeholders (`<your-project>`, `my_project`, `http://fake.endpoint`). Git history and author emails were deliberately not rewritten (needs an explicit owner decision).
+
+**Durable lessons:**
+- A default that changes bins changes every gate computed on those bins: when flipping a binning default, re-run every consumer that thresholds on the bins (IV bands, rankings, leak gates), not just the WOE tables.
+- Never ship a fallback that points at a real environment (project, host, bucket): a missing setting must fail loudly, and examples must use placeholders.
+
