@@ -91,6 +91,8 @@ Fields worth checking (roughly in the order they landed, since each closed a rea
 
 Compares `score_cols` (existing model outputs) against `target_col`, globally and cross-cut by `time_dims`/`population_dims`.
 
+- `global_perf` / `group_perf` evaluate every score, the base included, on the rows where all scores are valid (after 0.9.0); `N_OWN` is each score's own coverage, and `perf_common_rows=False` switches to each score's own rows. A score with no valid row is dropped with a warning.
+
 - `sample_name` on the underlying `PerformanceEvaluator.model_perf_compare` used to be hardcoded to `"oot"` regardless of what population was actually passed in (misleading label on both the global table and every group-by table). Fixed by threading an explicit `sample_name` parameter through from the pipeline (defaults to `"all"` when called directly, not `"oot"`) — if you ever call `model_perf_compare` yourself outside the pipeline, pass `sample_name=` explicitly rather than relying on the default.
 - `group_min_size` — set this for any population dim with small cells (a niche channel, a rare segment); otherwise a 50-row group still gets a full 10-bin gains table and its IV/KS reads as noise, not signal.
 

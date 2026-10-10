@@ -530,3 +530,19 @@ Still open from the same audit (reported, not fixed yet): `split_col` drops reje
 - When a stage deliberately produces a missing value to mean "unknown", follow it to every consumer. A cast, a `fillna`, a `> 0.5` comparison or a groupby sum downstream turns "unknown" back into a confident answer, and the fix that introduced the missing value looks done because its own unit test passes.
 - A model whose output becomes another model's labels is part of that model's training: hold the evaluation sample out of every upstream fit, not just the last one. A leak through generated labels is invisible in the downstream code and only shows on pure-noise data.
 - A direction or scale setting that describes a column must be checked against whoever writes the column; when the pipeline writes it, the setting is no longer free.
+
+## `ScoreComparisonPipeline` compared scores on different rows (audit 2026-10-09; fixed after 0.9.0, unreleased)
+
+Run on synthetic scores with known performance; fixes in the shared evaluation code, so `Model_Evaluation_Tool` behaves the same outside the pipeline. Regression tests: `SuperModelingFactory_pytest/test_score_comparison_audit.py`.
+
+- **`model_perf_compare` sample rule.** Comparison scores used the rows where *every* comparison score was above 0 (one all-zero score emptied them all; a 10%-coverage score cut the others to 800 of 8,000 rows) while the base score kept its own rows (AUC 0.714 vs 0.713 on different populations; 0.637 vs 0.713 on the same rows). Now `sync_data_size=True` evaluates every score, base included, on the common valid rows (finite, and > 0 with `positive_score_only`); a score with no valid row is left out with a `UserWarning`; `N_OWN` gives each score's own coverage; `sync_data_size=False` (pipeline `perf_common_rows=False`) is "each score on its own rows". A thin challenger now narrows the common rows: that is visible in `N` vs `N_OWN`.
+- **`multi_group_wrapper` used `query(f"{col} == '{value}'")`**: numeric group columns (the default `apply_month`) gave empty tables and a quote in a value raised `SyntaxError`. Selection is by value now; NaN forms no group; rows come in order of appearance.
+- **Weighted Gains table** (`weighted_eval_utils.get_gains_table`, behind `GainsTableCalculator(weight_col=...)`, the pipeline's weighted `gains` and the weighted `PerformanceEvaluator` LIFT/IV): unlabelled rows were goods (`PERF_CNT` was the full weight) and missing scores were ranked into the last bins. Now `PERF_CNT`/`N_BAD`/`N_GOOD`/`AUC` use labelled rows and missing scores are dropped or, with `include_missing=True`, reported in a `Missing` row.
+
+Found while fixing, not fixed: the *unweighted* gains table with `include_missing=True` and `equal_freq=True` fills missing scores with `fillna` and quantile-bins them together with real scores, so they join the lowest bin instead of a bin of their own.
+
+Still open from the same audit: weighted gains drop `gains_add_func` / `custom_metric_cols` and the summary row; `min_data_size` off by one for single-column groups; `cross_binning_numeric=True` raises `TypeError`; a `/` in a `group_specs` name writes into a subfolder.
+
+**Durable lessons:**
+- A "comparison" table is only a comparison if every row of it is measured on the same population; report the coverage next to the metric instead of letting the sample silently differ.
+- Never build a `DataFrame.query` string from data values: types and quoting break it. Select with boolean masks.
