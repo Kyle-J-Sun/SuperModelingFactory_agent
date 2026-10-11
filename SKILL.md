@@ -21,7 +21,7 @@ print(smf.__version__)
 ```
 Say this number out loud in your answer when it's relevant (it usually is). Every claim below about "as of vX.Y" needs to be checked against *this* number, not assumed.
 
-Release status (as of the 0.9.1 bump): PyPI has 0.8.2 and then 0.9.1. **0.9.0 was prepared (commit `e1ef627`) but never tagged or uploaded**, so "fixed in 0.9.0" in the references means "first available on PyPI in 0.9.1"; a user on PyPI who reports 0.9.0 is running a source checkout. Check PyPI (`pip index versions supermodelingfactory`) before telling a user that a version is published.
+Release status (as of the 0.9.2 bump): PyPI has 0.8.2 and then 0.9.1; 0.9.2 is prepared on `main` and tagged separately after review. **0.9.0 was prepared (commit `e1ef627`) but never tagged or uploaded**, so "fixed in 0.9.0" in the references means "first available on PyPI in 0.9.1"; a user on PyPI who reports 0.9.0 is running a source checkout. 0.9.2 changes the screening IV on WOE bins (class-pure bins left out; `screen_iv_convention='raw'` restores 0.9.1), see `known_gotchas.md`. Check PyPI (`pip index versions supermodelingfactory`) before telling a user that a version is published.
 
 ---
 
